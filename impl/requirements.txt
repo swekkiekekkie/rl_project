@@ -1,0 +1,3 @@
+numpy
+gymnasium
+pygame # for render_mode="human"
