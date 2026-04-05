@@ -1,0 +1,162 @@
+Gymnasium API contract for this project
+=======================================
+
+This file pins down which parts of **Gymnasium** (the maintained fork of the
+classic “OpenAI Gym” API; package name `gymnasium`, often imported as `gym`)
+we rely on, and what we implement ourselves in `dp.py`, `mc.py`, `td.py`, and
+optional custom environment code.
+
+Official reference: https://gymnasium.farama.org/
+
+
+1. Package and imports
+----------------------
+
+- Install: `pip install gymnasium` (see `requirements.txt`).
+- We use: `import gymnasium as gym` and `from gymnasium import Env` where
+  type hints are useful.
+- Legacy `gym` (OpenAI) is **not** a project dependency; Gymnasium is the
+  supported library for this API.
+
+
+2. What Gymnasium provides (library responsibilities)
+-----------------------------------------------------
+
+2.1 Environment factory
+
+  gym.make(id, **kwargs) -> Env
+    - Loads a registered environment by string id (e.g. `"FrozenLake-v1"`).
+    - Common kwargs: `render_mode` (e.g. `None`, `"human"`, `"rgb_array"`),
+      environment-specific options (e.g. `is_slippery` for FrozenLake).
+    - Our wrapper: `env.make_env(...)` in `env.py` calls `gym.make` and
+      optionally seeds via `reset`.
+
+2.2 Core Env protocol (instance methods and attributes)
+
+  env.observation_space
+    - Description of valid observations. For tabular RL we require
+      `gymnasium.spaces.Discrete(n)` so observations are integers 0..n-1.
+
+  env.action_space
+    - Description of valid actions. We require `Discrete(n)` for tabular methods.
+
+  obs, info = env.reset(seed=optional_int)
+    - Starts a new episode. Returns initial observation and an `info` dict.
+    - Seeding: pass `seed` for reproducibility (also consider `np.random` /
+      episode-level seeds for stochastic policies).
+
+  obs, reward, terminated, truncated, info = env.step(action)
+    - One transition. `action` must belong to `action_space`.
+    - `terminated`: episode ended by environment rules (e.g. goal, failure).
+    - `truncated`: episode cut by a time limit or other external limit.
+    - Episode end: treat as terminal if `terminated or truncated` when
+      bootstrapping or logging episode returns.
+
+  env.render()  [optional]
+    - Visual or textual render depending on `render_mode` at construction.
+
+  env.close()  [optional]
+    - Release resources (windows, files).
+
+  env.spec
+    - Metadata; `env.spec.id` is the environment id string (used in
+      `describe_env`).
+
+2.3 Spaces (what we use from gymnasium.spaces)
+
+  spaces.Discrete(n)
+    - Attributes: `.n` (cardinality), `.sample()` (uniform random draw).
+    - Used for both observation and action spaces in tabular mode.
+
+  We do **not** target continuous `Box` spaces for the tabular algorithms in
+  this course project; if you used `Box`, you would leave the assignment’s
+  tabular scope.
+
+2.4 Registration (only if you ship a custom environment)
+
+  gymnasium.envs.registration.register(id, entry_point, ...)
+    - Lets `gym.make("YourEnv-v0")` work. Optional for this project if you
+      only instantiate your class directly in the notebook.
+
+2.5 Optional (not required for the minimal pipeline)
+
+  - **Wrappers**: compose behavior (e.g. `TimeLimit`, custom logging). Useful
+    but not part of the core contract unless you introduce them.
+  - **Vectorized envs**: `gym.vector` — out of scope unless you parallelize.
+
+
+3. What we implement ourselves (not provided by Gymnasium)
+-----------------------------------------------------------
+
+3.1 All RL algorithms
+
+  - Dynamic programming (policy evaluation, improvement, policy iteration,
+    value iteration): **`dp.py`**
+  - Monte Carlo (prediction / control, ES or not): **`mc.py`**
+  - Temporal difference (TD(0), SARSA, Q-learning): **`td.py`**
+
+  Gymnasium does **not** implement value functions, policies, or updates. It
+  only defines the environment interface and simulates transitions.
+
+3.2 Agents and learning loops
+
+  - Policy representations (tables), ε-greedy action selection, episode loops
+    that call `reset` / `step`, and plotting — **our code** (notebook + modules).
+
+3.3 Full MDP model for dynamic programming
+
+  - Gymnasium’s generic `Env` API does **not** expose a full tabular model
+    `p(s', r | s, a)` for every built-in environment.
+  - For DP you must obtain transition probabilities yourself, e.g.:
+    - Implement a **custom** env subclass where you define transitions in code
+      and can export them to arrays used by `dp.py`, or
+    - For some classic discrete envs, access dynamics via **undocumented /
+      env-specific** attributes on `env.unwrapped` (e.g. transition dicts in the
+      FrozenLake implementation). That is **not** part of the stable public API;
+      treat it as an implementation detail if you use it, or derive a model by
+      enumeration if the environment is deterministic and small.
+  - Responsibility split: **Gymnasium** = sample simulator; **we** = model
+    construction for DP when needed.
+
+3.4 Random baseline
+
+  - `action_space.sample()` is Gymnasium’s API; the loop that aggregates reward
+    and counts steps is **our** notebook/helper code.
+
+
+4. Minimal interaction pattern (aligned with `main.py` / `env.py`)
+-----------------------------------------------------------------
+
+  env = gym.make(ENV_ID, render_mode=None, **kwargs)
+  n_s = env.observation_space.n   # Discrete
+  n_a = env.action_space.n       # Discrete
+
+  obs, info = env.reset(seed=seed)
+  done = False
+  while not done:
+      a = ...                      # from policy or random: env.action_space.sample()
+      obs, reward, terminated, truncated, info = env.step(a)
+      done = terminated or truncated
+
+
+5. Summary table
+----------------
+
+  Gymnasium provides              | We provide
+  --------------------------------|------------------------------------------
+  `make`, `Env`, `reset`, `step`  | DP / MC / TD algorithms
+  `observation_space`,            | Tabular V(s), Q(s,a), policies
+   `action_space` (Discrete)      |
+  `terminated` / `truncated`     | ε-greedy, exploring starts, α, γ, θ, ε
+  `render` / `close` (optional)   | Plots, report, episode statistics
+  One-step simulation of the MDP  | For DP: explicit p(s',r|s,a) (or equivalent)
+  `Discrete.sample()`             | Learning updates and evaluation protocol
+
+
+6. Version note
+---------------
+
+  Gymnasium maintains API compatibility with the classic Gym v0.26+ five-value
+  `step` return (`obs`, `reward`, `terminated`, `truncated`, `info`). Older
+  tutorials using a four-value `done` return are obsolete; this project uses
+  the five-value contract only.
